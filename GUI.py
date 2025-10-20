@@ -31,11 +31,13 @@ from typing import List, Tuple
 # Qt imports
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QFileDialog, QLabel, QTextEdit, QProgressBar, QMessageBox, QLineEdit
+    QPushButton, QFileDialog, QLabel, QTextEdit, QProgressBar, QMessageBox, QLineEdit, QComboBox, QToolButton
 )
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtCore import Qt, QUrl, Signal, QObject
+from PySide6.QtGui import QIcon
+
 
 # Try to import whisperx but handle gracefully if unavailable
 try:
@@ -66,17 +68,20 @@ class WhisperXWorker(threading.Thread):
     AFTER calling, it validates expected files/outputs and emits progress.
     """
 
-    def __init__(self, video_path: str, signals: WorkerSignals, model: str = "small", device: str = "cuda"):
+    def __init__(self, video_path: str, signals: WorkerSignals, model: str = "medium", device: str = "cuda", language: str = "ja", chunk_size: int = 13, vad_onset: float = 0.3, vad_offset: float = 0.363, batch_size: int = 16, no_speech_threshold: float = 0.5, compute_type: str = "float16"):
         super().__init__()
         self.video_path = video_path
         self.signals = signals
         self.model = model
         self.device = device
+        self.language = language
         self._stop = False
-        self.chunk_size = 13
-        self.vad_onset = 0.3
-        self.vad_offset = 0.363
-        self.batch_size = 16  
+        self.chunk_size = chunk_size
+        self.vad_onset = vad_onset
+        self.vad_offset = vad_offset
+        self.batch_size = batch_size
+        self.no_speech_threshold = no_speech_threshold
+        self.compute_type = compute_type
 
     def run(self):
         # Step 1: Extract audio using ffmpeg
@@ -163,37 +168,43 @@ class WhisperXWorker(threading.Thread):
         # Conservative attempt: try the requested device, fallback to cpu
         device = self.device
         chunk_size = self.chunk_size
-        vad_onset = self.vad_onset 
+        vad_onset = self.vad_onset
         vad_offset = self.vad_offset
         batch_size = self.batch_size
+        compute_type = self.compute_type
 
-        # try:
-        model = whisperx.load_model(
-            self.model,
-            device=device,
-            compute_type="float16",
-            language="ja",
-            vad_options={
-            "chunk_size": chunk_size,
-            "vad_onset": vad_onset,
-            "vad_offset": vad_offset,
-    },
-        )
-        # except Exception as e:
-        #     # fallback to cpu
-        #     try:
-        #         device = "cpu"
-        #         model = whisperx.load_model(self.model, device=device)
-        #     except Exception as e2:
-        #         raise RuntimeError(f"載入 whisperx 模型失敗: primary error={e}, fallback error={e2}")
+        try:
+            model = whisperx.load_model(
+                self.model,
+                device=device,
+                compute_type=compute_type,
+                language=self.language,
+                vad_options={
+                    "chunk_size": chunk_size,
+                    "vad_onset": vad_onset,
+                    "vad_offset": vad_offset,
+                },
+                asr_options={
+                    "no_speech_threshold": self.no_speech_threshold,
+                    },
+            )
+        except Exception as e:
+            # fallback to cpu
+            try:
+                device = "cpu"
+                model = whisperx.load_model(self.model, device=device)
+            except Exception as e2:
+                raise RuntimeError(f"載入 whisperx 模型失敗: primary error={e}, fallback error={e2}")
 
         # Transcribe (this uses whisperx API: transcribe then align)
         # The following is a guarded use reflecting typical whisperx usage.
         result = model.transcribe(
             audio_path,
             batch_size=batch_size,
-            chunk_size=chunk_size,      
-            )
+            chunk_size=chunk_size,
+            
+        )
+        
         # result contains .segments usually; but whisperx typical flow requires alignment
         try:
             # align to get word-level timestamps
@@ -278,6 +289,124 @@ class MainWindow(QMainWindow):
         self.transcript.setReadOnly(True)
         layout.addWidget(self.transcript, stretch=2)
 
+        # --- Settings ---
+        self.settings_widget = QWidget()
+        settings_layout = QVBoxLayout()
+        self.settings_widget.setLayout(settings_layout)
+        layout.addWidget(self.settings_widget)
+
+        # --- Basic Settings ---
+        basic_settings_layout = QHBoxLayout()
+
+        # Model selection
+        model_group = QWidget()
+        model_layout = QVBoxLayout()
+        model_group.setLayout(model_layout)
+        model_layout.addWidget(QLabel("WhisperX Model:"))
+        self.model_combo = QComboBox()
+        self.model_combo.addItems(["tiny", "base", "small", "medium", "large"])
+        self.model_combo.setCurrentText("medium")
+        model_layout.addWidget(self.model_combo)
+        basic_settings_layout.addWidget(model_group)
+
+        # Device selection
+        device_group = QWidget()
+        device_layout = QVBoxLayout()
+        device_group.setLayout(device_layout)
+        device_layout.addWidget(QLabel("Device:"))
+        self.device_combo = QComboBox()
+        self.device_combo.addItems(["cuda", "cpu"])
+        self.device_combo.setCurrentText("cuda")
+        device_layout.addWidget(self.device_combo)
+        basic_settings_layout.addWidget(device_group)
+
+        # Language selection
+        language_group = QWidget()
+        language_layout = QVBoxLayout()
+        language_group.setLayout(language_layout)
+        language_layout.addWidget(QLabel("Language:"))
+        self.language_input = QLineEdit("ja")
+        language_layout.addWidget(self.language_input)
+        basic_settings_layout.addWidget(language_group)
+
+        # Batch size
+        batch_size_group = QWidget()
+        batch_size_layout = QVBoxLayout()
+        batch_size_group.setLayout(batch_size_layout)
+        batch_size_layout.addWidget(QLabel("Batch Size:"))
+        self.batch_size_input = QLineEdit("16")
+        batch_size_layout.addWidget(self.batch_size_input)
+        basic_settings_layout.addWidget(batch_size_group)
+
+        # Compute Type
+        compute_type_group = QWidget()
+        compute_type_layout = QVBoxLayout()
+        compute_type_group.setLayout(compute_type_layout)
+        compute_type_layout.addWidget(QLabel("Compute Type:"))
+        self.compute_type_combo = QComboBox()
+        self.compute_type_combo.addItems(["int8", "float16"])
+        self.compute_type_combo.setCurrentText("float16")
+        compute_type_layout.addWidget(self.compute_type_combo)
+        basic_settings_layout.addWidget(compute_type_group)
+
+        settings_layout.addLayout(basic_settings_layout)
+
+        # --- Advanced Settings Toggle ---
+        self.adv_settings_toggle_btn = QToolButton()
+        self.adv_settings_toggle_btn.setArrowType(Qt.RightArrow)
+        self.adv_settings_toggle_btn.setCheckable(True)
+        self.adv_settings_toggle_btn.setChecked(False)
+        self.adv_settings_toggle_btn.clicked.connect(self.toggle_advanced_settings)
+        
+        adv_toggle_layout = QHBoxLayout()
+        adv_toggle_layout.addWidget(self.adv_settings_toggle_btn)
+        adv_toggle_layout.addWidget(QLabel("Advanced Settings"))
+        adv_toggle_layout.addStretch()
+        settings_layout.addLayout(adv_toggle_layout)
+
+        # --- Advanced Settings ---
+        self.adv_settings_widget = QWidget()
+        adv_settings_layout = QHBoxLayout()
+        self.adv_settings_widget.setLayout(adv_settings_layout)
+        settings_layout.addWidget(self.adv_settings_widget)
+        self.adv_settings_widget.setVisible(False)
+
+        # Chunk size
+        chunk_size_group = QWidget()
+        chunk_size_layout = QVBoxLayout()
+        chunk_size_group.setLayout(chunk_size_layout)
+        chunk_size_layout.addWidget(QLabel("Chunk Size:"))
+        self.chunk_size_input = QLineEdit("13")
+        chunk_size_layout.addWidget(self.chunk_size_input)
+        adv_settings_layout.addWidget(chunk_size_group)
+
+        # VAD Onset
+        vad_onset_group = QWidget()
+        vad_onset_layout = QVBoxLayout()
+        vad_onset_group.setLayout(vad_onset_layout)
+        vad_onset_layout.addWidget(QLabel("VAD Onset:"))
+        self.vad_onset_input = QLineEdit("0.3")
+        vad_onset_layout.addWidget(self.vad_onset_input)
+        adv_settings_layout.addWidget(vad_onset_group)
+
+        # VAD Offset
+        vad_offset_group = QWidget()
+        vad_offset_layout = QVBoxLayout()
+        vad_offset_group.setLayout(vad_offset_layout)
+        vad_offset_layout.addWidget(QLabel("VAD Offset:"))
+        self.vad_offset_input = QLineEdit("0.363")
+        vad_offset_layout.addWidget(self.vad_offset_input)
+        adv_settings_layout.addWidget(vad_offset_group)
+
+        # No Speech Threshold
+        no_speech_threshold_group = QWidget()
+        no_speech_threshold_layout = QVBoxLayout()
+        no_speech_threshold_group.setLayout(no_speech_threshold_layout)
+        no_speech_threshold_layout.addWidget(QLabel("No Speech Threshold:"))
+        self.no_speech_threshold_input = QLineEdit("0.5")
+        no_speech_threshold_layout.addWidget(self.no_speech_threshold_input)
+        adv_settings_layout.addWidget(no_speech_threshold_group)
+
         # Internal state
         self.current_video = None
         self.srt_lines: List[SRTLine] = []
@@ -287,6 +416,11 @@ class MainWindow(QMainWindow):
         self.signals.progress.connect(self._on_progress)
         self.signals.finished.connect(self._on_finished)
         self.signals.srt_ready.connect(self._on_srt_ready)
+
+    def toggle_advanced_settings(self):
+        is_checked = self.adv_settings_toggle_btn.isChecked()
+        self.adv_settings_widget.setVisible(is_checked)
+        self.adv_settings_toggle_btn.setArrowType(Qt.DownArrow if is_checked else Qt.RightArrow)
 
     def open_file(self):
         file, _ = QFileDialog.getOpenFileName(self, "選取影片檔", os.path.expanduser("~"), "影片檔 (*.mp4 *.mkv *.avi *.mov);")
@@ -306,11 +440,31 @@ class MainWindow(QMainWindow):
         if not self.current_video:
             QMessageBox.warning(self, "錯誤", "請先選取一個影片檔")
             return
+
+        # Get settings from UI
+        model = self.model_combo.currentText()
+        device = self.device_combo.currentText()
+        language = self.language_input.text()
+        compute_type = self.compute_type_combo.currentText()
+        try:
+            chunk_size = int(self.chunk_size_input.text())
+            vad_onset = float(self.vad_onset_input.text())
+            vad_offset = float(self.vad_offset_input.text())
+            batch_size = int(self.batch_size_input.text())
+            no_speech_threshold = float(self.no_speech_threshold_input.text())
+        except ValueError:
+            QMessageBox.warning(self, "錯誤", "進階設定中的參數必須是數字")
+            return
+
         # Disable run button during work
         self.run_btn.setEnabled(False)
         self.status_label.setText("開始處理: 抽取音訊並呼叫 WhisperX...")
         self.progress.setValue(0)
-        self.worker = WhisperXWorker(self.current_video, self.signals)
+        self.worker = WhisperXWorker(
+            self.current_video, self.signals, model=model, device=device, language=language,
+            chunk_size=chunk_size, vad_onset=vad_onset, vad_offset=vad_offset, batch_size=batch_size,
+            no_speech_threshold=no_speech_threshold, compute_type=compute_type 
+        )
         self.worker.start()
 
     def _on_progress(self, val: int):
@@ -375,3 +529,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

@@ -31,7 +31,7 @@ from typing import List, Tuple
 # Qt imports
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QFileDialog, QLabel, QTextEdit, QProgressBar, QMessageBox, QLineEdit, QComboBox, QToolButton
+    QPushButton, QFileDialog, QLabel, QTextEdit, QProgressBar, QMessageBox, QLineEdit, QComboBox, QToolButton, QSlider
 )
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PySide6.QtMultimediaWidgets import QVideoWidget
@@ -252,10 +252,18 @@ class MainWindow(QMainWindow):
         self.video_widget = QVideoWidget()
         layout.addWidget(self.video_widget, stretch=3)
 
+        # Video progress slider
+        self.video_slider = QSlider(Qt.Horizontal)
+        self.video_slider.setSliderPosition(0)
+        self.video_slider.sliderMoved.connect(self.seek_video)
+        layout.addWidget(self.video_slider)
+
         self.player = QMediaPlayer()
         audio_out = QAudioOutput()
         self.player.setAudioOutput(audio_out)
         self.player.setVideoOutput(self.video_widget)
+        self.player.positionChanged.connect(self.update_slider_position)
+        self.player.durationChanged.connect(self.update_slider_range)
 
         # Controls
         ctrl_layout = QHBoxLayout()
@@ -421,6 +429,20 @@ class MainWindow(QMainWindow):
         is_checked = self.adv_settings_toggle_btn.isChecked()
         self.adv_settings_widget.setVisible(is_checked)
         self.adv_settings_toggle_btn.setArrowType(Qt.DownArrow if is_checked else Qt.RightArrow)
+
+    def seek_video(self, position: int):
+        """Seek video to the specified position when slider is moved."""
+        self.player.setPosition(position)
+
+    def update_slider_position(self, position: int):
+        """Update slider position based on current video playback position."""
+        self.video_slider.blockSignals(True)
+        self.video_slider.setValue(position)
+        self.video_slider.blockSignals(False)
+
+    def update_slider_range(self, duration: int):
+        """Update slider range based on video duration."""
+        self.video_slider.setRange(0, duration)
 
     def open_file(self):
         file, _ = QFileDialog.getOpenFileName(self, "選取影片檔", os.path.expanduser("~"), "影片檔 (*.mp4 *.mkv *.avi *.mov);")

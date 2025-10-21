@@ -1,0 +1,11 @@
+{
+  "model": "tiny",
+  "device": "cuda",
+  "language": "ja",
+  "compute_type": "float16",
+  "batch_size": "16",
+  "chunk_size": "13",
+  "vad_onset": "0.3",
+  "vad_offset": "0.363",
+  "no_speech_threshold": "0.5"
+}

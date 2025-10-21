@@ -27,6 +27,7 @@ import time
 import json
 from dataclasses import dataclass
 from typing import List, Tuple
+from pathlib import Path
 
 # Qt imports
 from PySide6.QtWidgets import (
@@ -237,6 +238,8 @@ class WhisperXWorker(threading.Thread):
 # --- GUI application ---
 
 class MainWindow(QMainWindow):
+    CONFIG_FILE = "whisperx_config.json"
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("WhisperX STT — Qt 前端範例")
@@ -425,7 +428,16 @@ class MainWindow(QMainWindow):
         self.signals.finished.connect(self._on_finished)
         self.signals.srt_ready.connect(self._on_srt_ready)
 
+        # Load saved configuration
+        self.load_config()
+
+    def closeEvent(self, event):
+        """Save configuration before closing the application."""
+        self.save_config()
+        event.accept()
+
     def toggle_advanced_settings(self):
+        """Toggle the visibility of advanced settings."""
         is_checked = self.adv_settings_toggle_btn.isChecked()
         self.adv_settings_widget.setVisible(is_checked)
         self.adv_settings_toggle_btn.setArrowType(Qt.DownArrow if is_checked else Qt.RightArrow)
@@ -538,6 +550,55 @@ class MainWindow(QMainWindow):
             return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
         else:
             return f"{h:02d}:{m:02d}:{s:02d}.{ms:03d}"
+
+    def save_config(self):
+        """Save all settings to JSON configuration file."""
+        config = {
+            "model": self.model_combo.currentText(),
+            "device": self.device_combo.currentText(),
+            "language": self.language_input.text(),
+            "compute_type": self.compute_type_combo.currentText(),
+            "batch_size": self.batch_size_input.text(),
+            "chunk_size": self.chunk_size_input.text(),
+            "vad_onset": self.vad_onset_input.text(),
+            "vad_offset": self.vad_offset_input.text(),
+            "no_speech_threshold": self.no_speech_threshold_input.text(),
+        }
+        try:
+            with open(self.CONFIG_FILE, "w", encoding="utf-8") as f:
+                json.dump(config, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"儲存配置文件失敗: {e}")
+
+    def load_config(self):
+        """Load settings from JSON configuration file."""
+        if not os.path.exists(self.CONFIG_FILE):
+            return
+        try:
+            with open(self.CONFIG_FILE, "r", encoding="utf-8") as f:
+                config = json.load(f)
+            
+            # Apply loaded settings to UI
+            if "model" in config:
+                self.model_combo.setCurrentText(config["model"])
+            if "device" in config:
+                self.device_combo.setCurrentText(config["device"])
+            if "language" in config:
+                self.language_input.setText(config["language"])
+            if "compute_type" in config:
+                self.compute_type_combo.setCurrentText(config["compute_type"])
+            if "batch_size" in config:
+                self.batch_size_input.setText(config["batch_size"])
+            if "chunk_size" in config:
+                self.chunk_size_input.setText(config["chunk_size"])
+            if "vad_onset" in config:
+                self.vad_onset_input.setText(config["vad_onset"])
+            if "vad_offset" in config:
+                self.vad_offset_input.setText(config["vad_offset"])
+            if "no_speech_threshold" in config:
+                self.no_speech_threshold_input.setText(config["no_speech_threshold"])
+        except Exception as e:
+            print(f"加載配置文件失敗: {e}")
 
 
 def main():
